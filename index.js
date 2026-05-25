@@ -16,6 +16,7 @@ const api = axios.create({
   headers: { api_access_token: CW_TOKEN, "Content-Type": "application/json" }
 });
 
+// Verificação do webhook pela Meta
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -25,6 +26,7 @@ app.get("/webhook", (req, res) => {
   res.sendStatus(403);
 });
 
+// Recebe mensagens do WhatsApp
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
   try {
@@ -62,15 +64,32 @@ app.post("/webhook", async (req, res) => {
       console.log(`Contato criado: ${contactId}`);
     }
 
-    // 3. Criar conversa
-    const conv = await api.post(`/conversations`, {
-      contact_id: contactId,
-      inbox_id: parseInt(CW_INBOX)
-    });
-    const convId = conv.data?.id;
-    console.log(`Conversa criada: ${convId}`);
+    // 3. Buscar conversa aberta existente do contato
+    let convId;
+    try {
+      const convs = await api.get(`/contacts/${contactId}/conversations`);
+      const abertas = convs.data?.payload?.filter(
+        c => c.status === "open" && c.inbox_id === parseInt(CW_INBOX)
+      );
+      if (abertas && abertas.length > 0) {
+        convId = abertas[0].id;
+        console.log(`Conversa existente: ${convId}`);
+      }
+    } catch(e) {
+      console.log("Nenhuma conversa aberta encontrada");
+    }
 
-    // 4. Adicionar mensagem
+    // 4. Criar conversa apenas se não existir aberta
+    if (!convId) {
+      const conv = await api.post(`/conversations`, {
+        contact_id: contactId,
+        inbox_id: parseInt(CW_INBOX)
+      });
+      convId = conv.data?.id;
+      console.log(`Nova conversa criada: ${convId}`);
+    }
+
+    // 5. Adicionar mensagem na conversa
     await api.post(`/conversations/${convId}/messages`, {
       content: text,
       message_type: "incoming",
@@ -82,27 +101,24 @@ app.post("/webhook", async (req, res) => {
     console.error("Erro:", JSON.stringify(e.response?.data) || e.message);
   }
 });
+
 // Recebe resposta do agente no Chatwoot e envia via WhatsApp
 app.post("/chatwoot", async (req, res) => {
   res.sendStatus(200);
   try {
     const { event, message_type, content, conversation } = req.body;
 
-    // Só processa mensagens de saída do agente
     if (event !== "message_created") return;
     if (message_type !== "outgoing") return;
     if (!content) return;
 
-    // Pega o número do WhatsApp do contato
     const phone = conversation?.meta?.sender?.phone_number;
     if (!phone) return;
 
-    // Remove o + do número
     const to = phone.replace("+", "");
 
     console.log(`Enviando para ${to}: ${content}`);
 
-    // Envia via Meta API
     await axios.post(
       `https://graph.facebook.com/v18.0/${PHONE_ID}/messages`,
       {
@@ -124,5 +140,6 @@ app.post("/chatwoot", async (req, res) => {
     console.error("Erro saída:", JSON.stringify(e.response?.data) || e.message);
   }
 });
+
 app.listen(process.env.PORT || 3000, () =>
   console.log("Webhook rodando!"));
