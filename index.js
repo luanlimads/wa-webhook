@@ -82,6 +82,47 @@ app.post("/webhook", async (req, res) => {
     console.error("Erro:", JSON.stringify(e.response?.data) || e.message);
   }
 });
+// Recebe resposta do agente no Chatwoot e envia via WhatsApp
+app.post("/chatwoot", async (req, res) => {
+  res.sendStatus(200);
+  try {
+    const { event, message_type, content, conversation } = req.body;
 
+    // Só processa mensagens de saída do agente
+    if (event !== "message_created") return;
+    if (message_type !== "outgoing") return;
+    if (!content) return;
+
+    // Pega o número do WhatsApp do contato
+    const phone = conversation?.meta?.sender?.phone_number;
+    if (!phone) return;
+
+    // Remove o + do número
+    const to = phone.replace("+", "");
+
+    console.log(`Enviando para ${to}: ${content}`);
+
+    // Envia via Meta API
+    await axios.post(
+      `https://graph.facebook.com/v18.0/${PHONE_ID}/messages`,
+      {
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: { body: content }
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${META_TOKEN}`,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    console.log(`Mensagem enviada para ${to}`);
+  } catch (e) {
+    console.error("Erro saída:", JSON.stringify(e.response?.data) || e.message);
+  }
+});
 app.listen(process.env.PORT || 3000, () =>
   console.log("Webhook rodando!"));
